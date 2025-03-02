@@ -1,0 +1,12 @@
+.prompt-input:focus {
+    borderColor: '#128C7E';
+    backgroundColor: '#ffffff';
+}
+
+.analyze-button:hover {
+    transform: translateY(-1px);
+}
+
+.recommendation-card:hover {
+    transform: translateY(-2px);
+} 

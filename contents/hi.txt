@@ -1,0 +1,131 @@
+import type { PlasmoContentScript } from "plasmo"
+
+export const config: PlasmoContentScript = {
+  matches: ["https://web.whatsapp.com/*"],
+  all_frames: true
+}
+
+interface Contact {
+  name: string
+  status: string
+  about: string
+  lastSeen?: string
+  profilePic?: string
+}
+
+// Helper function to wait for element
+async function waitForElement(selector: string, timeout = 5000): Promise<Element | null> {
+  const start = Date.now();
+  while (Date.now() - start < timeout) {
+    const element = document.querySelector(selector);
+    if (element) return element;
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  return null;
+}
+
+// Helper to safely click an element
+async function safeClick(element: Element | null | undefined): Promise<boolean> {
+  if (!element) return false;
+  try {
+    (element as HTMLElement).click();
+    return true;
+  } catch (error) {
+    console.error('Click failed:', error);
+    return false;
+  }
+}
+
+// Selectors for WhatsApp Web elements
+const SELECTORS = {
+  chatList: '[data-testid="chat-list"]',
+  chatItem: '[role="row"]',
+  contactName: '[data-testid="cell-frame-title"]',
+  contactStatus: '[data-testid="cell-frame-secondary"]',
+  contactImage: 'img',
+  aboutInfo: '[data-testid="drawer-right-header"] [title]'
+};
+
+export async function extractContacts(): Promise<Contact[]> {
+  console.log('Starting contact extraction...');
+  const contacts: Contact[] = [];
+
+  try {
+    // Wait for chat list
+    const chatList = await waitForElement(SELECTORS.chatList, 10000);
+    if (!chatList) {
+      console.error('Could not find chat list');
+      return contacts;
+    }
+
+    // Get all chat items
+    const chatItems = chatList.querySelectorAll(SELECTORS.chatItem);
+    console.log(`Found ${chatItems.length} chat items`);
+
+    for (const item of chatItems) {
+      try {
+        // Get basic contact info
+        const nameEl = item.querySelector(SELECTORS.contactName);
+        const name = nameEl?.textContent?.trim() || '';
+
+        // Skip groups
+        if (!name || name.includes('group') || name.includes('Group')) {
+          continue;
+        }
+
+        // Get status and image
+        const statusEl = item.querySelector(SELECTORS.contactStatus);
+        const status = statusEl?.textContent?.trim() || '';
+        const imgEl = item.querySelector(SELECTORS.contactImage) as HTMLImageElement;
+        const profilePic = imgEl?.src || '';
+
+        // Click to get more info
+        await safeClick(item);
+        await new Promise(resolve => setTimeout(resolve, 800));
+        
+        // Get about info
+        const aboutEl = document.querySelector(SELECTORS.aboutInfo);
+        const about = aboutEl?.getAttribute('title')?.trim() || '';
+
+        // Add contact
+        contacts.push({
+          name,
+          status,
+          about,
+          lastSeen: status,
+          profilePic
+        });
+
+        console.log(`Added contact: ${name}`);
+
+        // Close info panel if open
+        const closeButton = document.querySelector('[data-testid="btn-close"]');
+        if (closeButton) {
+          await safeClick(closeButton);
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
+      } catch (error) {
+        console.error('Error processing contact:', error);
+        continue;
+      }
+    }
+
+    console.log(`Extraction complete. Found ${contacts.length} contacts`);
+    return contacts;
+  } catch (error) {
+    console.error('Error in extraction:', error);
+    return contacts;
+  }
+}
+
+// Listen for messages from the popup
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (request.type === "EXTRACT_CONTACTS") {
+    console.log('Received contact extraction request');
+    extractContacts().then(contacts => {
+      console.log(`Sending ${contacts.length} contacts back to popup`);
+      sendResponse({ contacts });
+    });
+    return true; // Required for async response
+  }
+});
